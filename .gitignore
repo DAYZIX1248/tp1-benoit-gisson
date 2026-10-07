@@ -1,0 +1,7 @@
+# Environment variables and tokens
+.env
+.env.local
+*.token
+token.txt
+__pycache__/
+*.pyc

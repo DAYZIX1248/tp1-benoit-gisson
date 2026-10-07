@@ -1,0 +1,11 @@
+{
+  "$schema": "https://antigravity.google/config.json",
+  "mcpServers": {
+    "bibliotheque": {
+      "serverUrl": "https://ai-tools-mcp-biblio-production.up.railway.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MCP_TOKEN}"
+      }
+    }
+  }
+}
