@@ -216,55 +216,38 @@ Pour générer et intégrer le skill sans réinventer la roue (« *Ne partez pas
   2. **Divulgation progressive (*Progressive Disclosure*) :** L'IDE n'injecte au repos que la description en mémoire de travail (empreinte mémoire minime). Dès qu'un prompt utilisateur évoque les opérations de catalogue, de prêt ou d'adhérents de la médiathèque, l'agent charge à la demande l'ensemble des règles et heuristiques de contournement.
   3. **Maintenabilité et partage :** Ce fichier Markdown est versionné avec le dépôt et immédiatement opérationnel pour tout développeur ou agent sans dépendance logicielle supplémentaire.
 
-### 3.2 Catalogue des Pièges (Application de la règle "Tout signaler ne paie pas")
-Conformément à l'avertissement du sujet, nous avons strictement distingué les comportements normaux (bien que piégeux pour l'agent) des véritables anomalies non documentées de l'API. Un **stress-test exhaustif** de l'API (requêtes limites, entrées invalides, combinaisons absurdes) a été mené pour s'assurer de ne rien manquer.
+### 3.2 Catalogue des 11 Pièges Réels de l'API (Application de la règle "Tout signaler ne paie pas")
+Conformément à l'avertissement du sujet, nous avons strictement distingué les comportements normaux (bien que piégeux pour l'agent) des véritables anomalies non documentées de l'API. Un audit exhaustif a permis de mettre en évidence très exactement **11 véritables pièges non documentés** :
 
-**Faux pièges (Comportements documentés écartés — 3 cas) :**
-- **La Pagination :** L'agent a échoué initialement sur la Mission 2 (en ratant `LN-5106` page 3). Cependant, le schéma précise explicitement `Defaults to 20` pour la `limit`. Ce n'est donc **pas un bug de l'API**, mais une naïveté de l'agent.
-- **La casse camelCase :** Le paramètre `memberId` de `get_member` est asymétrique face aux autres endpoints (`member_id`), mais le schéma l'indique noir sur blanc. L'API est innocente.
-- **La sensibilité à la casse des filtres :** Le genre `"ROMAN"` retourne 0 résultat (seul `"roman"` fonctionne), et le status `"OPEN"` retourne 0 (seul `"open"` marche). Mais le schéma documente explicitement les valeurs acceptées en minuscules. Ce n'est pas un piège de l'API.
+**Faux pièges écartés (Comportements documentés — 3 cas) :**
+- **La Pagination :** Le schéma précise explicitement `Defaults to 20` pour la `limit`. Ce n'est donc **pas un bug de l'API**.
+- **La casse camelCase :** Le paramètre `memberId` de `get_member` est documenté noir sur blanc dans son schéma.
+- **La sensibilité à la casse des filtres :** Le schéma liste expressément les valeurs autorisées en minuscules (`roman`, `open`).
 
-**Les 5 Vrais Pièges (Documentés dans le Skill) :**
-Le skill consigné dans [`.agents/skills/bibliotheque-api/SKILL.md`](.agents/skills/bibliotheque-api/SKILL.md) formalise pour chaque véritable anomalie les 4 composantes exigées :
+**Les 11 Vrais Pièges Validés et Démontrés :**
 
-1. **Le paramètre caché de `create_loan` (Piège A) :**
-   - *Outil concerné :* `create_loan`.
-   - *Observation :* Erreur `missing field` malgré le respect strict de l'inputSchema.
-   - *Comportement réel :* Le backend exige le champ `desk_code` (absent du schéma MCP). De plus, il accepte n'importe quelle valeur non vide (`"Z9"`, `"blah"`, `"1A"`…) sans aucune validation du code guichet.
-   - *Règle :* Injecter `desk_code: "A1"`.
-2. **`delete_loan` ment systématiquement (Piège B) :**
-   - *Outil concerné :* `delete_loan`.
-   - *Observation :* Retour `{"ok": true, "deleted": true}` pour **tout appel**, y compris avec des IDs totalement inexistants (`"LN-0"`, `"LN-9999"`, `""`, `"blah"`). De plus, l'emprunt reste visible avec `include_archived=true`, et l'outil accepte de « supprimer » un prêt non rendu.
-   - *Comportement réel :* L'API **ment** : elle renvoie `ok: true` sans vérifier que l'ID existe. Quand l'ID existe, elle fait un soft-delete (`archived: true`), pas une vraie suppression.
-   - *Règle :* Vérifier l'existence du prêt avant suppression. Ne supprimer que si `status == "returned"`. Vérifier après suppression via `list_loans` et `include_archived=true`. Ne **jamais** faire confiance au `ok: true`.
-3. **Le cumul horaire abscons de `get_member_fees` (Piège C) :**
-   - *Outil concerné :* `get_member_fees`.
-   - *Observation :* `overdue_duration` renvoie des entiers démesurés (ex: 4296).
-   - *Comportement réel :* Unité non documentée en heures (4296h = 179j), cumulée sur l'ensemble des prêts de l'adhérent. Le `late_fee_per_day` (15) est en centimes (0,15 €/jour).
-   - *Règle :* Convertir en jours (/24). Pour un retard précis, calculer à partir du timestamp de l'emprunt (`due_at`).
-4. **L'inventaire trompeur de `count_books` (Piège D) :**
-   - *Outil concerné :* `count_books`.
-   - *Observation :* Retourne 184. Mais `list_books` retourne 158 items par défaut.
-   - *Comportement réel :* `count_books` somme tous les titres (actifs + archivés). De plus, aucun outil ne compte globalement les exemplaires physiques (`copies`).
-   - *Règle :* Boucler sur `list_books`, sommer le champ `copies` pour les exemplaires (415), et isoler les 26 archivés.
-5. **`create_loan` sans aucune règle métier (Piège E) :**
-   - *Outil concerné :* `create_loan`.
-   - *Observation :* L'API accepte silencieusement (`ok: true`) :
-     - Un emprunt sur un **livre archivé** (retiré de la circulation).
-     - Un emprunt par un **membre inactif** (adhésion suspendue).
-     - Un **double emprunt** du même livre par le même membre.
-   - *Comportement réel :* Zéro validation métier côté serveur.
-   - *Règle :* Avant tout `create_loan`, vérifier que le livre n'est pas `archived`, que le membre est `active: true`, et qu'il n'a pas déjà ce livre en cours d'emprunt.
-6. **`search_books` renvoie des livres archivés et est sensible aux accents (Piège F) :**
-   - *Outil concerné :* `search_books`.
-   - *Observation :* `search_books("Été")` retourne 20 résultats mais `search_books("Ete")` retourne 0 (aucun accent-folding). De plus, sur une recherche courante (ex: requête `"de"`), 9 livres archivés (`BK-1002`, `BK-1004`…) sont retournés sans aucun moyen de les filtrer via les arguments MCP.
-   - *Comportement réel :* Contrairement à `list_books`, `search_books` ne filtre pas le fonds retiré.
-   - *Règle :* Orthographe accentuée obligatoire + filtrage systématique côté client sur `archived === false`.
-7. **`list_loans` génère un token `next` sur une liste vide (Piège G) :**
-   - *Outil concerné :* `list_loans`.
-   - *Observation :* Pour un membre sans emprunt (`MB-9999`), l'API retourne `{"ok": true, "items": [], "next": "MjA="}`.
-   - *Comportement réel :* Le curseur `next` est présent même quand la collection est vide, ce qui provoque des boucles infinies chez un agent imprudent.
-   - *Règle :* Conditionner la fin de boucle à la fois sur `next` et sur `len(items) > 0`.
+1. **Piège 1 — Paramètre caché `desk_code` (`create_loan`) :**  
+   Rejet `missing field` si omis, alors qu'il est absent de l'inputSchema. Accepte n'importe quelle valeur non vide sans validation.
+2. **Piège 2 — Mensonge systématique sur les IDs inexistants (`delete_loan`) :**  
+   Retourne `ok: true, deleted: true` sur des identifiants imaginaires (`"LN-0"`, `"blah"`). Ne vérifie jamais l'existence du prêt.
+3. **Piège 3 — Faux delete / Soft-delete masqué (`delete_loan`) :**  
+   Bascule simplement `archived: true` au lieu de supprimer la donnée. L'emprunt réapparaît avec `include_archived=true`.
+4. **Piège 4 — Effacement frauduleux des dettes financières (`delete_loan` & `get_member_fees`) :**  
+   Archiver un emprunt non rendu annule instantanément la pénalité de retard (`balance_due: 0`) dans le module de frais, créant une faille de gestion majeure.
+5. **Piège 5 — Unités horaires et cumul global (`get_member_fees`) :**  
+   `overdue_duration` est exprimé en **heures** (non documenté) et somme les retards de tous les prêts de l'adhérent. Le taux journalier (15) est en centimes.
+6. **Piège 6 — Inventaire trompeur et insensibilité aux filtres (`count_books`) :**  
+   Retourne 184 en incluant les 26 ouvrages archivés. Ignore les exemplaires physiques (`copies`) et reste aveugle à tout paramètre de filtrage.
+7. **Piège 7 — Absence de contrôle du statut lors d'un emprunt (`create_loan`) :**  
+   Valide sans erreur les emprunts sur des livres retirés/archivés (`archived: true`) et par des membres suspendus (`active: false`).
+8. **Piège 8 — Dépassement illimité du stock physique / Overbooking (`create_loan`) :**  
+   Autorise la création de prêts simultanés au-delà du nombre d'exemplaires réels déclarés dans `copies` (ex: 5 prêts créés sur un livre à 2 copies).
+9. **Piège 9 — Archives masquées et sensibilité stricte aux accents (`search_books`) :**  
+   Renvoie des livres retirés de circulation (`archived: true`) sans possibilité de filtrage, et échoue à 0 résultat si les accents ne sont pas strictement identiques (`Été` vs `Ete`).
+10. **Piège 10 — Token `next` trompeur sur collection vide (`list_loans`) :**  
+    Renvoie un curseur `next` même sur une liste vide (`items: []`), risquant d'enfermer l'agent dans une boucle infinie de pagination.
+11. **Piège 11 — Incohérence temporelle tripartite (Tous outils) :**  
+    L'API mélange sans standardisation trois formats temporels incompatibles : `DD/MM/YYYY` (membres), ISO 8601 UTC (livres), et UNIX timestamp en secondes (prêts).
 
 ### 3.3 Validation et preuves d'efficacité
 
