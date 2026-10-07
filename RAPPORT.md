@@ -216,16 +216,36 @@ Pour générer et intégrer le skill sans réinventer la roue (« *Ne partez pas
   2. **Divulgation progressive (*Progressive Disclosure*) :** L'IDE n'injecte au repos que la description en mémoire de travail (empreinte mémoire minime). Dès qu'un prompt utilisateur évoque les opérations de catalogue, de prêt ou d'adhérents de la médiathèque, l'agent charge à la demande l'ensemble des règles et heuristiques de contournement.
   3. **Maintenabilité et partage :** Ce fichier Markdown est versionné avec le dépôt et immédiatement opérationnel pour tout développeur ou agent sans dépendance logicielle supplémentaire.
 
-### 3.2 Catalogue des 7 pièges documentés dans le Skill
-Le skill consigné dans [`.agents/skills/bibliotheque-api/SKILL.md`](.agents/skills/bibliotheque-api/SKILL.md) formalise pour chaque anomalie les 4 composantes exigées :
+### 3.2 Catalogue des Pièges (Application de la règle "Tout signaler ne paie pas")
+Conformément à l'avertissement du sujet, nous avons strictement distingué les comportements normaux (bien que piégeux pour l'agent) des véritables anomalies non documentées de l'API.
 
-1. **`count_books` vs `list_books` :** Décalage de 26 livres archivés et omission des copies physiques -> Boucler sur `list_books`, sommer `copies`, distinguer actifs (158 / 415) et archivés (26 / 75).
-2. **Pagination tronquée par défaut (limite 20) :** Curseur opaque `next` dissimulant les emprunts anciens -> Boucler sur `start_key` tant que `next` n'est pas nul.
-3. **Incohérence de casse des paramètres :** `get_member` rejette `member_id` -> Employer strictement `memberId` (camelCase).
-4. **Calcul des retards (`get_member_fees`) :** Valeurs brutes en heures et cumulées sur tous les emprunts d'un membre -> Calculer `(now - due_at)/86400` sur chaque emprunt et diviser `overdue_duration` par 24.
-5. **Paramètre caché de création (`create_loan`) :** Échec `missing field` -> Injecter obligatoirement `desk_code: "A1"`.
-6. **Sémantique de suppression trompeuse (`delete_loan`) :** Soft-delete par bascule `archived: true` sans contrôle de restitution -> Filtrer `status == "returned"` avant suppression et prouver via `include_archived=true`.
-7. **Filtrage des relances adhérents :** Confusion entre absence de mail et compte suspendu -> Croiser `active === true` et `email !== null`.
+**Faux pièges (Comportements documentés écartés) :**
+- **La Pagination :** L'agent a échoué initialement sur la Mission 2 (en ratant `LN-5106` page 3). Cependant, le schéma précise explicitement `Defaults to 20` pour la `limit`. Ce n'est donc **pas un bug de l'API**, mais une naïveté de l'agent.
+- **La casse camelCase :** Le paramètre `memberId` de `get_member` est asymétrique face aux autres endpoints (`member_id`), mais le schéma l'indique noir sur blanc. L'API est innocente.
+
+**Les 4 Vrais Pièges (Documentés dans le Skill) :**
+Le skill consigné dans [`.agents/skills/bibliotheque-api/SKILL.md`](.agents/skills/bibliotheque-api/SKILL.md) formalise pour chaque véritable anomalie les 4 composantes exigées :
+
+1. **Le paramètre caché de `create_loan` :**
+   - *Outil concerné :* `create_loan`.
+   - *Observation :* Erreur `missing field` malgré le respect strict de l'inputSchema.
+   - *Comportement réel :* Le backend exige le champ `desk_code` (absent du schéma MCP).
+   - *Règle :* Injecter `desk_code: "A1"`.
+2. **Le soft-delete masqué de `delete_loan` :**
+   - *Outil concerné :* `delete_loan`.
+   - *Observation :* Retour `deleted: true`, mais l'emprunt reste visible avec `include_archived=true`, et l'outil accepte de "supprimer" un prêt non rendu.
+   - *Comportement réel :* Simple bascule `archived: true` (soft delete) sans contrôle de restitution.
+   - *Règle :* Ne lancer la suppression que si `status == "returned"`, et vérifier via `include_archived=true`.
+3. **Le cumul horaire abscons de `get_member_fees` :**
+   - *Outil concerné :* `get_member_fees`.
+   - *Observation :* `overdue_duration` renvoie des entiers démesurés (ex: 4296).
+   - *Comportement réel :* Unité non documentée en heures (4296h = 179j), cumulée sur l'ensemble des prêts de l'adhérent.
+   - *Règle :* Convertir en jours (/24). Pour un retard précis, calculer à partir du timestamp de l'emprunt (`due_at`).
+4. **L'inventaire trompeur de `count_books` :**
+   - *Outil concerné :* `count_books`.
+   - *Observation :* Retourne 184. Mais `list_books` retourne 158 items par défaut.
+   - *Comportement réel :* `count_books` somme tous les titres (actifs + archivés). De plus, aucun outil ne compte globalement les exemplaires physiques (`copies`).
+   - *Règle :* Boucler sur `list_books`, sommer le champ `copies` pour les exemplaires (415), et isoler les 26 archivés.
 
 ### 3.3 Validation et preuves d'efficacité
 
