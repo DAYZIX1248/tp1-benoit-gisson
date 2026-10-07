@@ -2,47 +2,71 @@
 name: bibliotheque-api
 description: >-
   Guide opérationnel de l'API MCP "bibliotheque-municipale". Distingue les comportements documentés (à respecter) des anomalies réelles non documentées de l'API.
+  À activer impérativement avant toute manipulation du catalogue, des adhérents ou des emprunts.
 ---
 
 # Guide Opérationnel — API Serveur MCP Médiathèque Municipale
 
-Ce skill dicte à l'agent comment interagir correctement avec la médiathèque. Il distingue les comportements normaux (bien que surprenants) explicitement prévus par le schéma, et les véritables anomalies non documentées de l'API.
+Ce skill dicte à l'agent comment interagir correctement avec la médiathèque. Il distingue les comportements normaux explicitement prévus par le schéma, et les véritables anomalies non documentées de l'API.
 
 ---
 
-## 1. Comportements NORMAUX ET DOCUMENTÉS (À ne pas confondre avec des bugs)
+## SECTION 1 — Comportements DOCUMENTÉS (Ne pas signaler comme des bugs)
 
-*Attention : Ne signalez pas ces points comme des erreurs du serveur. Ils sont décrits dans les schémas MCP.*
+*Attention : Ces points sont décrits dans les schémas MCP. Les signaler comme des anomalies serait une erreur.*
 
-* **Pagination (Outils `list_*`) :**  
-  Le schéma indique clairement `Defaults to 20` pour le paramètre `limit`, et documente le `start_key`. L'agent ne doit pas traiter cela comme un piège, mais **toujours implémenter une boucle de pagination** avec `start_key` tant que `"next"` est fourni, notamment pour scanner l'intégralité des emprunts.
-* **Casse du paramètre `memberId` (Outil `get_member`) :**  
-  Bien que les autres outils utilisent `member_id`, le schéma de `get_member` exige spécifiquement `memberId` (camelCase). Ce n'est pas un bug : l'agent doit simplement lire et respecter le schéma exact.
+### 1.1 Pagination (`list_*`)
+Le schéma indique clairement `"Defaults to 20"` pour le `limit`, et documente le curseur `start_key`. L'agent doit **toujours boucler** avec `start_key` tant que `"next"` est présent.
+
+### 1.2 Paramètre `memberId` en camelCase (`get_member`)
+Bien que les autres outils utilisent `member_id` (snake_case), le schéma de `get_member` exige spécifiquement `memberId`. Ce n'est pas un bug : l'agent doit respecter le schéma exact.
+
+### 1.3 Filtres `genre` et `status` en minuscules strictes
+Le schéma liste explicitement les valeurs acceptées en minuscules : `roman, policier, jeunesse, essai, bd, poésie` pour le genre, et `"open"` / `"returned"` pour le status. Le serveur est case-sensitive : `"ROMAN"` ou `"OPEN"` retournent 0 résultat. De même, un espace superflu (`"policier "`) provoque 0 résultat.
 
 ---
 
-## 2. VÉRITABLES ANOMALIES NON DOCUMENTÉES (Pièges de l'API)
+## SECTION 2 — VÉRITABLES ANOMALIES NON DOCUMENTÉES (Pièges de l'API)
 
-### Piège A : `create_loan` (Paramètre obligatoire caché hors schéma)
-* **Outil concerné :** `create_loan`
-* **Ce que l'on observe :** Appeler `create_loan(member_id="...", book_id="...")` échoue avec `{"ok": false, "error": "missing field"}`, bien que l'inputSchema MCP n'exige que ces deux propriétés.
-* **Ce que fait réellement le serveur :** Le backend exige le code guichet `desk_code` (ex: `"A1"` ou `"B2"`), totalement absent du schéma MCP.
-* **Règle à appliquer :** Toujours injecter manuellement `desk_code: "A1"` lors de la création d'un emprunt.
+### Piège A — `create_loan` : paramètre obligatoire caché (`desk_code`)
+* **Outil :** `create_loan`
+* **Observation :** `create_loan(member_id, book_id)` échoue avec `"missing field"`, malgré le respect du schéma.
+* **Réalité :** Le backend exige un champ `desk_code` totalement absent du schéma MCP. De plus, il accepte n'importe quelle valeur non vide (même `"Z9"`, `"blah"`, `"1A"` sont acceptés sans aucune validation).
+* **Règle :** Toujours ajouter `desk_code: "A1"` lors de la création.
 
-### Piège B : `delete_loan` (Faux delete et absence de garde-fous)
-* **Outil concerné :** `delete_loan`
-* **Ce que l'on observe :** L'outil renvoie `{"ok": true, "deleted": true}`, mais l'emprunt reste visible si l'on ajoute `include_archived=true`. De plus, il accepte de "supprimer" un emprunt non rendu (`status: "open"`).
-* **Ce que fait réellement le serveur :** Il n'effectue aucun hard-delete. Il réalise un **soft-delete** (`archived: true`) et ne vérifie aucune règle métier de restitution.
-* **Règle à appliquer :** Filtrer strictement pour n'effacer que les emprunts ayant `status == "returned"`. Vérifier la disparition via `list_loans(member_id="...")` (doit être absent) et `list_loans(include_archived=true)` (doit être `archived: true`).
+### Piège B — `delete_loan` : ment sur le résultat et soft-delete
+* **Outil :** `delete_loan`
+* **Observation :** Retour `{"ok": true, "deleted": true}` pour tout appel, y compris :
+  - Des IDs valides qui existent.
+  - Des IDs **totalement inexistants** (`"LN-0"`, `"LN-9999"`, `""`, `"blah"`).
+  - Des emprunts non rendus (`status: "open"`).
+* **Réalité :** L'API **ment systématiquement**. Elle renvoie `ok: true` sans vérifier que l'ID existe. De plus, quand l'ID existe, elle ne supprime rien réellement : elle bascule `archived: true` (soft-delete). Et elle n'empêche pas l'archivage d'un emprunt encore en cours.
+* **Règle :** 
+  1. Avant de supprimer, **toujours vérifier l'existence** du prêt via `list_loans`.
+  2. Ne supprimer que les emprunts avec `status == "returned"`.
+  3. Après suppression, **vérifier** via `list_loans` (sans `include_archived`) que le prêt a bien disparu, et via `list_loans(include_archived=true)` qu'il est marqué `archived: true`.
+  4. Ne jamais faire confiance au `ok: true` retourné.
 
-### Piège C : `get_member_fees` (Unité horaire et cumul global)
-* **Outil concerné :** `get_member_fees`
-* **Ce que l'on observe :** Le champ `overdue_duration` retourne des valeurs immenses (ex: 4296) non typées.
-* **Ce que fait réellement le serveur :** Ce champ, non explicité dans le schéma, est exprimé en **heures** (4296h = 179 jours). Par ailleurs, il retourne la somme globale de **tous** les retards de l'adhérent, et non la durée d'un prêt ciblé.
-* **Règle à appliquer :** Convertir les heures en jours (/ 24). Ne jamais attribuer ce chiffre global à un emprunt précis si l'adhérent a plusieurs prêts en retard. Pour un prêt précis, calculer le retard directement avec son timestamp `due_at`.
+### Piège C — `get_member_fees` : unité horaire non documentée et cumul global
+* **Outil :** `get_member_fees`
+* **Observation :** `overdue_duration` retourne des entiers immenses (ex: 4296).
+* **Réalité :** L'unité (non documentée) est en **heures** (4296h = 179 jours). C'est un cumul de **tous** les retards de l'adhérent, pas d'un prêt ciblé. Le `late_fee_per_day` (15) est en **centimes** par jour (0,15 €/jour).
+* **Règle :** Convertir `overdue_duration / 24` pour les jours. Pour un prêt précis, calculer directement `(now - due_at) / 86400`.
 
-### Piège D : Différence d'inventaire (`count_books` vs `list_books`)
-* **Outil concerné :** `count_books` et `list_books`
-* **Ce que l'on observe :** `count_books` retourne 184 (sans paramètres). `list_books` retourne 158 titres actifs et ne fait aucune somme. 
-* **Ce que fait réellement le serveur :** `count_books` indique la taille brute du catalogue incluant les retirés (`archived: true`). Le piège réside dans le concept "d'ouvrage" : aucun outil ne donne directement le volume d'exemplaires physiques (qui se lit dans `copies`).
-* **Règle à appliquer :** Pour un inventaire exact, boucler sur `list_books`. Sommer le champ `copies` pour avoir le nombre d'exemplaires physiques (415 actifs), et faire la distinction claire avec les 26 ouvrages archivés.
+### Piège D — `count_books` : inventaire biaisé par les archivés
+* **Outil :** `count_books`
+* **Observation :** Retourne 184, mais `list_books` ne retourne que 158 titres actifs.
+* **Réalité :** `count_books` inclut silencieusement les 26 ouvrages archivés. Aucun outil ne donne directement le total d'exemplaires physiques (`copies`).
+* **Règle :** Boucler sur `list_books`, sommer `copies` (415 actifs), isoler les archivés.
+
+### Piège E — `create_loan` : aucune validation des règles métier
+* **Outil :** `create_loan`
+* **Observation :** L'API accepte sans erreur :
+  - Un emprunt sur un **livre archivé** (retiré de la circulation) → `ok: true`.
+  - Un emprunt par un **membre inactif** (adhésion suspendue) → `ok: true`.
+  - Un **double emprunt** du même livre par le même membre → `ok: true` deux fois.
+* **Réalité :** Zéro validation métier côté serveur. L'API ne contrôle ni le statut du livre, ni celui du membre, ni les doublons.
+* **Règle :** Avant tout `create_loan`, l'agent doit impérativement :
+  1. Vérifier que le livre n'est PAS `archived: true` via `get_book`.
+  2. Vérifier que le membre est `active: true` via `get_member`.
+  3. Vérifier via `list_loans(member_id=..., status="open")` que le membre n'a pas déjà ce livre en cours d'emprunt.
