@@ -247,7 +247,7 @@ Le skill consigné dans [`.agents/skills/bibliotheque-api/SKILL.md`](.agents/ski
    - *Observation :* Retourne 184. Mais `list_books` retourne 158 items par défaut.
    - *Comportement réel :* `count_books` somme tous les titres (actifs + archivés). De plus, aucun outil ne compte globalement les exemplaires physiques (`copies`).
    - *Règle :* Boucler sur `list_books`, sommer le champ `copies` pour les exemplaires (415), et isoler les 26 archivés.
-5. **`create_loan` sans aucune règle métier (Piège E) — Découvert par stress-test :**
+5. **`create_loan` sans aucune règle métier (Piège E) :**
    - *Outil concerné :* `create_loan`.
    - *Observation :* L'API accepte silencieusement (`ok: true`) :
      - Un emprunt sur un **livre archivé** (retiré de la circulation).
@@ -255,6 +255,16 @@ Le skill consigné dans [`.agents/skills/bibliotheque-api/SKILL.md`](.agents/ski
      - Un **double emprunt** du même livre par le même membre.
    - *Comportement réel :* Zéro validation métier côté serveur.
    - *Règle :* Avant tout `create_loan`, vérifier que le livre n'est pas `archived`, que le membre est `active: true`, et qu'il n'a pas déjà ce livre en cours d'emprunt.
+6. **`search_books` renvoie des livres archivés et est sensible aux accents (Piège F) :**
+   - *Outil concerné :* `search_books`.
+   - *Observation :* `search_books("Été")` retourne 20 résultats mais `search_books("Ete")` retourne 0 (aucun accent-folding). De plus, sur une recherche courante (ex: requête `"de"`), 9 livres archivés (`BK-1002`, `BK-1004`…) sont retournés sans aucun moyen de les filtrer via les arguments MCP.
+   - *Comportement réel :* Contrairement à `list_books`, `search_books` ne filtre pas le fonds retiré.
+   - *Règle :* Orthographe accentuée obligatoire + filtrage systématique côté client sur `archived === false`.
+7. **`list_loans` génère un token `next` sur une liste vide (Piège G) :**
+   - *Outil concerné :* `list_loans`.
+   - *Observation :* Pour un membre sans emprunt (`MB-9999`), l'API retourne `{"ok": true, "items": [], "next": "MjA="}`.
+   - *Comportement réel :* Le curseur `next` est présent même quand la collection est vide, ce qui provoque des boucles infinies chez un agent imprudent.
+   - *Règle :* Conditionner la fin de boucle à la fois sur `next` et sur `len(items) > 0`.
 
 ### 3.3 Validation et preuves d'efficacité
 
