@@ -22,15 +22,16 @@ tp1-benoit-gisson/
 ├── .agents/
 │   └── skills/
 │       └── bibliotheque-api/
-│           └── SKILL.md              # Le Skill documentant les 11 pièges et règles de l'API
+│           └── SKILL.md              # Le Skill documentant les 11 pièges réels (P1 à P11)
 ├── screenshots/                      # Captures d'écran probantes exigées par le sujet
 │   ├── 01_tools_list.png             # Découverte des 12 outils exposés
 │   ├── 02_raw_tool_read.png          # Appel de lecture avec réponse brute JSON
 │   ├── 03_agent_false_positive.png   # Exemple d'erreur masquée et faux résultat
 │   ├── 04_before_after_m1.png        # Comparatif Avant / Après sur la Mission 1
 │   ├── 05_before_after_m2.png        # Comparatif Avant / Après sur la Mission 2
-│   └── 06_skill_loaded.png           # Chargement du skill par Antigravity IDE
-├── mcp_config.json                   # Configuration MCP Antigravity (sans token en clair)
+│   └── 06_skill_loaded.png           # Chargement du skill par l'agent
+├── opencode.json                     # Configuration officielle OpenCode demandée
+├── mcp_config.json                   # Configuration MCP Antigravity
 ├── antigravity.json                  # Déclaration MCP IDE
 ├── .gitignore                        # Protection contre les fuites de secrets (.env)
 ├── .env.example                      # Gabarit de configuration d'environnement
@@ -39,34 +40,30 @@ tp1-benoit-gisson/
 
 ---
 
-## 🎯 Résultats Clés des 5 Missions
+## 🎯 Résultats des Cinq Missions
 
-| Mission | Intitulé | Résultat Final Validé |
+| Mission | Intitulé | Résultat Final Retenu |
 | :--- | :--- | :--- |
-| **M1** | **Inventaire** | **158 titres actifs** en circulation (**415 exemplaires physiques**). Fonds total avec archivés : 184 titres (490 exemplaires). |
-| **M2** | **Le retardataire** | Emprunt le plus en retard : **`LN-5106`** (Adhérent : **`MB-225`** Paul Blanc, Livre : **`BK-1075`**). Retard : **179 jours exacts** (4 296 h). Montant dû : **26,85 €**. |
-| **M3** | **La réinscription** | Emprunt créé avec succès avec le paramètre caché guichet (`desk_code: "A1"`). Vérifié dans `list_loans(member_id="MB-214")`. |
-| **M4** | **Le ménage** | Les 6 emprunts déjà rendus de **`MB-202`** ont été archivés. Registre actif ramené à 0 emprunt rendu. Traces archivées auditées. |
-| **M5** | **La relance** | **29 adhérents en retard** au total : **20 joignables par email** (actifs avec email valide) et **9 non joignables** (8 avec email manquant et 1 adhérente avec compte inactif). |
+| **M1** | **Inventaire** | **158 titres en service** (415 exemplaires physiques). Total catalogue avec 26 archivés : 184 titres (490 exemplaires). |
+| **M2** | **Le retardataire** | Prêt **`LN-5106`** (Paul Blanc / MB-225, livre `BK-1075`). Retard : **179 jours** selon l'horloge figée du serveur (180 j calendrier réel). Montant dû : **26,85 €**. |
+| **M3** | **La réinscription** | Prêt `LN-5137` enregistré au guichet `A1` pour Chloé Roux (MB-214) sur `BK-1042`. Vérifié dans `list_loans`. |
+| **M4** | **Le ménage** | Les 6 prêts rendus de MB-202 sont **archivés mais non effacés physiquement** (soft-delete). LN-5060 reste actif. |
+| **M5** | **La relance** | **29 adhérents en retard**. **21 joignables** (20 adresses distinctes suite au doublon Yanis Robin). **8 non joignables** (5 avec `email: null` et 3 avec clé `email` absente). |
 
 ---
 
-## 🛡️ Résumé des 11 Pièges Documentés dans le Skill
+## 🛡️ Les 11 Pièges Réels (P1 à P11)
 
-1. **`create_loan` :** Paramètre obligatoire caché `desk_code` (absent du schéma MCP).
-2. **`delete_loan` :** Mensonge systématique : valide `ok: true` même sur des identifiants inexistants.
-3. **`delete_loan` :** Soft-delete masqué : bascule simplement `archived: true` au lieu de supprimer.
-4. **`delete_loan` & `get_member_fees` :** Effacement frauduleux des dettes financières sur suppression d'un prêt en cours.
-5. **`get_member_fees` :** Unités horaires (non documentées) et cumul global sur tous les prêts de l'adhérent.
-6. **`count_books` :** Inventaire trompeur incluant les 26 archivés et aveugle à tous les filtres.
-7. **`create_loan` :** Absence de contrôle de statut (accepte les livres archivés et membres inactifs).
-8. **`create_loan` :** Overbooking illimité (dépassement libre du stock physique `copies`).
-9. **`search_books` :** Renvoie silencieusement des archives et applique une sensibilité stricte aux accents.
-10. **`list_loans` :** Jeton `next` trompeur sur collection vide (risque de boucle infinie).
-11. **Tous outils :** Incohérence temporelle tripartite (mélange de `DD/MM/YYYY`, ISO 8601 et UNIX timestamps).
-
----
-
-## 🚀 Consultation
-
-Consultez [**`RAPPORT.md`**](RAPPORT.md) pour le détail méthodologique et les réponses aux questions académiques.
+| Id | Piège | Nature |
+| :--- | :--- | :--- |
+| **P1** | Curseur `next` jamais `null` après la fin | Non-terminaison de pagination |
+| **P2** | Paramètre `limit` plafonné à 50 sans avertissement | Plafonnement silencieux |
+| **P3** | `count_books` (184) ≠ `list_books` (158) | Biais d'inventaire |
+| **P4** | `create_loan` exige `desk_code` hors schéma | Paramètre fantôme |
+| **P5** | `delete_loan` répond `deleted: true` mais effectue un soft-delete | Sémantique trompeuse |
+| **P6** | `get_member_fees` : heures / centimes / cumul non documentés | Unités absconses |
+| **P7** | Horloge serveur figée au 06/10/2026 09:00 UTC | ✔ *Trouvaille inattendue* |
+| **P8** | `email: null` vs clé absente, doublon d'adhérent (MB-200 / MB-237) | Incohérence schéma |
+| **P9** | Réponses vides `ok: true` sous charge | ✔ *Trouvaille inattendue* |
+| **P10** | Filtre invalide retournant une liste vide sans erreur | Erreur silencieuse |
+| **P11** | 3 prêts dont le début est antérieur à la date d'ajout du livre | ✔ *Trouvaille inattendue* |
